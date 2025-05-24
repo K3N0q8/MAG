@@ -5,6 +5,7 @@ import oandapyV20
 import oandapyV20.endpoints.accounts as accounts
 import oandapyV20.endpoints.instruments as instruments_api
 import oandapyV20.endpoints.pricing as pricing_api
+import oandapyV20.endpoints.trades as trades_api
 from oandapyV20.exceptions import V20Error
 import pandas as pd
 
@@ -267,6 +268,108 @@ class OANDAConnector:
             print(f"An unexpected error occurred in get_current_price for {instruments_str}: {e}")
             return None
 
+    def get_open_positions(self):
+        """
+        Fetches a list of open trades/positions for the account.
+
+        Returns:
+            list: A list of dictionaries, where each dictionary represents an open trade
+                  with keys: 'id', 'instrument', 'currentUnits', 'price', 'unrealizedPL'.
+                  Returns an empty list if no open positions or an error occurs.
+        """
+        if not self.client or not self.account_id:
+            print("OANDA client not initialized. Cannot get open positions.")
+            return []
+
+        r = trades_api.OpenTrades(accountID=self.account_id)
+        try:
+            response = self.client.request(r)
+            trades_data = response.get('trades', [])
+            
+            processed_trades = []
+            for trade in trades_data:
+                processed_trades.append({
+                    'id': trade.get('id'),
+                    'instrument': trade.get('instrument'),
+                    'currentUnits': trade.get('currentUnits'),
+                    'price': trade.get('price'), # Open price
+                    'unrealizedPL': trade.get('unrealizedPL')
+                    # Optional: 'marginUsed': trade.get('marginUsed')
+                })
+            
+            if processed_trades:
+                print(f"\n--- Open Positions ({len(processed_trades)}) ---")
+                for pt in processed_trades:
+                    print(f"  ID: {pt['id']}, Inst: {pt['instrument']}, Units: {pt['currentUnits']}, "
+                          f"OpenPrice: {pt['price']}, P/L: {pt['unrealizedPL']}")
+                print("--------------------------\n")
+            else:
+                print("\n--- No Open Positions Found ---\n")
+                
+            return processed_trades
+            
+        except V20Error as e:
+            print(f"OANDA API Error in get_open_positions: {e}")
+            return []
+        except Exception as e:
+            print(f"An unexpected error occurred in get_open_positions: {e}")
+            return []
+
+    def get_trade_history(self, count=100):
+        """
+        Fetches a list of closed trades for the account.
+
+        Args:
+            count (int): The number of most recent closed trades to fetch.
+
+        Returns:
+            list: A list of dictionaries, where each dictionary represents a closed trade
+                  with keys: 'id', 'instrument', 'initialUnits', 'price' (open price),
+                  'realizedPL', 'openTime', 'closeTime', 'averageClosePrice'.
+                  Returns an empty list if no closed trades or an error occurs.
+        """
+        if not self.client or not self.account_id:
+            print("OANDA client not initialized. Cannot get trade history.")
+            return []
+
+        params = {"state": "CLOSED", "count": count}
+        r = trades_api.TradesList(accountID=self.account_id, params=params)
+        try:
+            response = self.client.request(r)
+            trades_data = response.get('trades', [])
+            
+            processed_history = []
+            for trade in trades_data:
+                processed_history.append({
+                    'id': trade.get('id'),
+                    'instrument': trade.get('instrument'),
+                    'initialUnits': trade.get('initialUnits'),
+                    'price': trade.get('price'), # Open price
+                    'realizedPL': trade.get('realizedPL'),
+                    'openTime': trade.get('openTime'),
+                    'closeTime': trade.get('closeTime'),
+                    'averageClosePrice': trade.get('averageClosePrice')
+                })
+            
+            if processed_history:
+                print(f"\n--- Trade History (Last {len(processed_history)}) ---")
+                for th in processed_history:
+                    print(f"  ID: {th['id']}, Inst: {th['instrument']}, Units: {th['initialUnits']}, "
+                          f"OpenPrice: {th['price']}, ClosePrice: {th['averageClosePrice']}, "
+                          f"P/L: {th['realizedPL']}, Open: {th['openTime']}, Close: {th['closeTime']}")
+                print("---------------------------\n")
+            else:
+                print("\n--- No Trade History Found ---\n")
+                
+            return processed_history
+            
+        except V20Error as e:
+            print(f"OANDA API Error in get_trade_history: {e}")
+            return []
+        except Exception as e:
+            print(f"An unexpected error occurred in get_trade_history: {e}")
+            return []
+
 if __name__ == "__main__":
     print("Attempting to initialize OANDAConnector and test connection...")
     connector = OANDAConnector()
@@ -275,13 +378,21 @@ if __name__ == "__main__":
             print("\n--- Testing get_account_summary ---")
             summary = connector.get_account_summary()
             if summary:
-                # The method already prints the details.
-                # You can choose to print the raw summary dict here if needed:
-                # import json
-                # print(f"Raw Account Summary: {json.dumps(summary, indent=2)}")
-                pass
+                pass # Already prints details
             else:
                 print("Failed to retrieve account summary in main block.")
+            print("-----------------------------------\n")
+
+            print("--- Testing get_open_positions ---")
+            open_positions = connector.get_open_positions()
+            if not open_positions:
+                print("No open positions found or an error occurred during fetch for main block test.")
+            print("-----------------------------------\n")
+            
+            print("--- Testing get_trade_history (last 5) ---")
+            trade_history = connector.get_trade_history(count=5)
+            if not trade_history:
+                print("No trade history found or an error occurred during fetch for main block test.")
             print("-----------------------------------\n")
 
             # Example call to get_historical_data
@@ -305,12 +416,7 @@ if __name__ == "__main__":
             current_prices = connector.get_current_price(instruments_to_fetch)
 
             if current_prices:
-                # The method already prints the details.
-                # You can add more processing here if needed.
-                # For example, to access a specific price:
-                # if "EUR_USD" in current_prices:
-                # print(f"EUR_USD Ask: {current_prices['EUR_USD']['ask']}")
-                pass
+                pass # Already prints details
             else:
                 print("Failed to retrieve current prices in main block.")
             print("-----------------------------------\n")
