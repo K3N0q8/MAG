@@ -1,0 +1,16 @@
+# Configuration for Soccer Betting Analyzer
+
+# API Settings
+# Get your API key from https://the-odds-api.com/
+the_odds_api:
+  api_key: 'YOUR_API_KEY_HERE' # Replace with your actual API key
+
+# Analysis Settings
+analysis:
+  default_ev_threshold: 0.05 # Default minimum Expected Value to consider a bet valuable
+  # Future: Could add preferred_leagues, probability_model_settings etc.
+
+# Data Storage (example for future use)
+# data_storage:
+#   odds_data_path: 'data/odds/'
+#   results_data_path: 'data/results/'
