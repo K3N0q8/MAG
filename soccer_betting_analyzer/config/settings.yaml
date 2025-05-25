@@ -10,7 +10,11 @@ analysis:
   default_ev_threshold: 0.05 # Default minimum Expected Value to consider a bet valuable
   # Future: Could add preferred_leagues, probability_model_settings etc.
 
-# Data Storage (example for future use)
+# Data Storage
+data_storage:
+  base_path: 'data/api_cache/' # Base directory for cached API responses
+  freshness_hours: 6          # How many hours cached data is considered fresh
+# Future: Could add separate paths for different types of data
 # data_storage:
 #   odds_data_path: 'data/odds/'
 #   results_data_path: 'data/results/'

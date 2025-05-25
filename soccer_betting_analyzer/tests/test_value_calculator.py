@@ -117,6 +117,66 @@ class TestValueCalculator(unittest.TestCase):
         value_bets_mismatch = value_calculator.find_value_bets_for_event(example_event_name_mismatch, user_probs_different_name, value_threshold=0.0)
         self.assertEqual(len(value_bets_mismatch), 0, "Should not find value if outcome names in event data and prob dict don't match")
 
+    def test_get_implied_probabilities_for_market(self):
+        market_outcomes = [
+            {"name": "Team A", "price": 2.00}, # 0.5
+            {"name": "Draw", "price": 3.20},   # 0.3125
+            {"name": "Team B", "price": 4.50}    # 0.2222...
+        ]
+        expected_probs = {
+            "Team A": 0.5,
+            "Draw": 1/3.20,
+            "Team B": 1/4.50
+        }
+        implied_probs = value_calculator.get_implied_probabilities_for_market(market_outcomes)
+        self.assertAlmostEqual(implied_probs["Team A"], expected_probs["Team A"])
+        self.assertAlmostEqual(implied_probs["Draw"], expected_probs["Draw"])
+        self.assertAlmostEqual(implied_probs["Team B"], expected_probs["Team B"])
+
+        # Test with empty input list
+        self.assertEqual(value_calculator.get_implied_probabilities_for_market([]), {})
+
+        # Test with outcomes missing 'name' or 'price', or with invalid prices
+        market_invalid = [
+            {"name": "Team A", "price": 2.00},
+            {"name": "Team B"}, # Missing price
+            {"price": 3.00}, # Missing name
+            {"name": "Team C", "price": 0.8} # Invalid price
+        ]
+        implied_invalid = value_calculator.get_implied_probabilities_for_market(market_invalid)
+        self.assertIn("Team A", implied_invalid)
+        self.assertEqual(len(implied_invalid), 1, "Only one valid outcome should be processed.")
+
+    def test_remove_vig(self):
+        # Typical H2H market with vig
+        market_probs_with_vig = {"Team A": 0.5, "Draw": 0.3125, "Team B": 0.22222222} # Sum = 1.03472222
+        sum_with_vig = sum(market_probs_with_vig.values())
+        
+        de_vigged = value_calculator.remove_vig(market_probs_with_vig)
+        self.assertAlmostEqual(sum(de_vigged.values()), 1.0)
+        self.assertAlmostEqual(de_vigged["Team A"], market_probs_with_vig["Team A"] / sum_with_vig)
+        self.assertAlmostEqual(de_vigged["Draw"], market_probs_with_vig["Draw"] / sum_with_vig)
+        self.assertAlmostEqual(de_vigged["Team B"], market_probs_with_vig["Team B"] / sum_with_vig)
+
+        # Test with empty input
+        self.assertEqual(value_calculator.remove_vig({}), {})
+
+        # Test with probabilities already summing to 1.0
+        market_probs_no_vig = {"Team A": 0.5, "Draw": 0.3, "Team B": 0.2} # Sum = 1.0
+        de_vigged_no_vig = value_calculator.remove_vig(market_probs_no_vig)
+        self.assertAlmostEqual(sum(de_vigged_no_vig.values()), 1.0)
+        self.assertAlmostEqual(de_vigged_no_vig["Team A"], 0.5) # Should be effectively unchanged
+
+        # Test with probabilities summing to a non-positive number (should return original or empty)
+        # Based on current implementation, it prints a warning and returns original.
+        market_probs_neg_sum = {"Team A": -0.5, "Team B": -0.2}
+        de_vigged_neg_sum = value_calculator.remove_vig(market_probs_neg_sum)
+        self.assertEqual(de_vigged_neg_sum, market_probs_neg_sum) 
+
+        market_probs_zero_sum = {"Team A": 0.0, "Team B": 0.0}
+        de_vigged_zero_sum = value_calculator.remove_vig(market_probs_zero_sum)
+        self.assertEqual(de_vigged_zero_sum, market_probs_zero_sum)
+
 
 if __name__ == '__main__':
     # This allows running the tests directly from the command line

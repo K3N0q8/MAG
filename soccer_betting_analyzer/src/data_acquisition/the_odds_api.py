@@ -1,46 +1,37 @@
 import requests
-import json # Though requests handles json directly, good to have if manual parsing is ever needed.
+import json
 
-# Assuming src is in PYTHONPATH or the script is run in a way that resolves this:
-from utils.config_loader import APP_CONFIG
+# API_BASE_URL is a constant for this module
+API_BASE_URL = "https://api.the-odds-api.com/v4/sports"
 
-# Placeholder for the API base URL - check documentation for the correct v4 URL.
-# Example: API_BASE_URL = "https://api.the-odds-api.com/v4" 
-API_BASE_URL = "https://api.the-odds-api.com/v4/sports" # Adjusted based on typical API structures, confirm from docs
+# Placeholder constant for comparison, actual key comes from config via function argument
+# This helps identify if a placeholder is mistakenly used.
+API_KEY_PLACEHOLDER_CONFIG = 'YOUR_API_KEY_HERE' # Matches the placeholder in settings.yaml
+API_KEY_PLACEHOLDER_INTERNAL = 'YOUR_API_KEY_PLACEHOLDER' # Legacy internal placeholder, for safety
 
-# API_KEY is now fetched from APP_CONFIG in the function
-# API_KEY = 'YOUR_API_KEY' 
-
-DEFAULT_API_KEY_PLACEHOLDER = 'YOUR_API_KEY_PLACEHOLDER' # Used if config is missing
-
-def get_soccer_odds(api_key: str = None, regions: str = 'eu', markets: str = 'h2h', odds_format: str = 'decimal', date_format: str = 'iso'):
+def get_odds(api_key: str, sport_key: str, regions: str = 'eu', markets: str = 'h2h', odds_format: str = 'decimal', date_format: str = 'iso'):
     """
-    Fetches soccer odds from The Odds API.
+    Fetches odds from The Odds API for a specified sport.
 
     Args:
-        api_key: The API key for The Odds API. If None, attempts to load from config.
+        api_key: The API key for The Odds API. This is mandatory.
+        sport_key: The key for the sport to fetch odds for (e.g., 'soccer_epl'). This is mandatory.
         regions: Comma-separated list of regions (e.g., 'eu', 'us', 'uk', 'au'). Defaults to 'eu'.
         markets: Comma-separated list of markets (e.g., 'h2h', 'spreads', 'totals'). Defaults to 'h2h'.
         odds_format: The format for odds ('decimal' or 'american'). Defaults to 'decimal'.
         date_format: The format for dates ('iso' or 'unix'). Defaults to 'iso'.
 
     Returns:
-        A dictionary containing the API response data, or None if an error occurs.
-        Specifically, it should return the list of events data.
+        A list of event data dictionaries from the API response, or None if a critical error occurs.
+        Returns an empty list if the API call is successful but no events are found.
     """
-    used_api_key = api_key
-    if used_api_key is None:
-        # Attempt to load API key from config if not provided directly
-        used_api_key = APP_CONFIG.get('the_odds_api', {}).get('api_key', DEFAULT_API_KEY_PLACEHOLDER)
+    if not api_key or api_key == API_KEY_PLACEHOLDER_CONFIG or api_key == API_KEY_PLACEHOLDER_INTERNAL:
+        print(f"Error: API key is missing or is a placeholder ('{api_key}'). Please configure it in config/settings.yaml.")
+        return None # Critical error, cannot proceed
 
-    if used_api_key == DEFAULT_API_KEY_PLACEHOLDER or not used_api_key:
-        print(f"Warning: API key is set to placeholder '{DEFAULT_API_KEY_PLACEHOLDER}' or is missing. Please configure it in config/settings.yaml.")
-        # Prevent actual API calls during development without a key.
-        return []
-
-    # Example: Fetching upcoming Premier League (soccer_epl) odds.
-    # The actual sport key needs to be confirmed from The Odds API documentation.
-    sport_key = 'soccer_epl' # Example, make this configurable or an argument later
+    if not sport_key:
+        print("Error: Sport key is mandatory and was not provided.")
+        return None # Critical error
 
     params = {
         'apiKey': api_key,
@@ -49,83 +40,130 @@ def get_soccer_odds(api_key: str = None, regions: str = 'eu', markets: str = 'h2
         'oddsFormat': odds_format,
         'dateFormat': date_format,
     }
-
-    # Construct the URL for a specific sport, e.g., soccer_epl
-    # The final URL structure needs to be verified from The Odds API documentation.
-    # It might be something like /sports/{sport_key}/odds/ or similar.
-    # For now, I'll assume a general odds endpoint and filter by sport if the API supports it,
-    # or use a sport-specific endpoint if that's how it works.
-    # Based on their site, it seems like {sport}/odds is a common pattern.
-    
-    # The URL should be: https://api.the-odds-api.com/v4/sports/{sport}/odds
-    # Let's try with a generic soccer endpoint first if available, or a major league.
-    # For this example, I'm using 'soccer_epl' as the sport_key.
-    # Users will likely want to query various leagues.
     
     url = f"{API_BASE_URL}/{sport_key}/odds"
+    response_obj = None # To store response for potential error logging outside try block for HTTPError
 
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()  # Raises an HTTPError for bad responses (4XX or 5XX)
+        response_obj = requests.get(url, params=params)
         
-        # Data is a list of events
-        data = response.json()
+        # Check for specific client/server errors first
+        if response_obj.status_code == 401:
+            print(f"Error: Unauthorized (401). Check your API key. Message: {response_obj.text}")
+            return None
+        if response_obj.status_code == 404:
+            print(f"Error: Data not found (404) for sport '{sport_key}'. Check sport key or API plan. Message: {response_obj.text}")
+            return None # Could also be an empty list if preferred for "not found" type errors
+        if response_obj.status_code == 429:
+            print(f"Error: Too many requests (429). You may have exceeded your API quota. Message: {response_obj.text}")
+            return None
+            
+        response_obj.raise_for_status()  # Raises an HTTPError for other bad responses (4XX or 5XX)
+        
+        data = response_obj.json()
+        if not data: # API might return an empty list if no events match the query
+            print(f"No upcoming events found for sport '{sport_key}' with regions '{regions}' and markets '{markets}'.")
+            return [] # Successfully fetched, but no events
         return data
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from The Odds API: {e}")
+    except requests.exceptions.HTTPError as e:
+        # This will catch errors from raise_for_status() for non-401/404/429 client/server errors
+        err_msg = f"HTTP error fetching data from The Odds API for '{sport_key}': {e}"
+        if response_obj is not None:
+            err_msg += f"\nResponse status: {response_obj.status_code}. Response content: {response_obj.text}"
+        else:
+            err_msg += "\nNo response object available."
+        print(err_msg)
+        return None
+    except requests.exceptions.RequestException as e: # Covers network errors, DNS failures, timeouts etc.
+        print(f"Request error fetching data from The Odds API for '{sport_key}': {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"Error decoding JSON response: {e}")
+        # This means the server responded with success (2xx) but content was not valid JSON
+        err_msg = f"Error decoding JSON response for '{sport_key}': {e}."
+        if response_obj is not None and response_obj.text:
+             err_msg += f"\nResponse content was: {response_obj.text[:500]}..." # Show partial content
+        print(err_msg)
         return None
 
 # Example usage (optional, for testing within the module)
 if __name__ == '__main__':
-    print("Attempting to fetch soccer odds (Premier League)...")
-    # IMPORTANT: Replace 'YOUR_API_KEY' with a valid key to test.
-    # For automated testing, this part should not run or should use a mock key/server.
-    
-    # Retrieve API_KEY for the test call from config
-    test_api_key = APP_CONFIG.get('the_odds_api', {}).get('api_key', DEFAULT_API_KEY_PLACEHOLDER)
+    print("This script is intended to be used as a module.")
+    print("To test 'get_odds', you would typically call it from another script (like main.py)")
+    print("that handles API key configuration from 'config/settings.yaml'.")
+    print("\nExample of how you might call it (requires manual API_KEY and SPORT_KEY):")
+    print("# from utils.config_loader import APP_CONFIG # Assuming you have this for config")
+    print("# configured_api_key = APP_CONFIG.get('the_odds_api', {}).get('api_key')")
+    print("# if configured_api_key and configured_api_key != 'YOUR_API_KEY_HERE':")
+    print("#     odds = get_odds(configured_api_key, sport_key='soccer_epl', regions='uk')")
+    print("#     if odds is not None:")
+    print("#         print(f'Fetched {len(odds)} events for soccer_epl')")
+    print("# else:")
+    print("#     print('API key not configured or is placeholder in settings.yaml')")
 
-    if test_api_key != DEFAULT_API_KEY_PLACEHOLDER and test_api_key:
-        print(f"Attempting to fetch soccer odds (Premier League) using API key from config...")
-        # Pass the loaded key to the function for the test run
-        odds_data = get_soccer_odds(api_key=test_api_key, regions='uk', markets='h2h')
-        if odds_data is not None: # Check if None, not just falsy (empty list is valid if API returns no events)
-            print(f"Successfully fetched {len(odds_data)} events.")
-            # Print details of the first event if data exists
-            if odds_data:
-                print("Details of the first event:")
-                print(json.dumps(odds_data[0], indent=2))
-        else:
-            print("Failed to fetch odds data or no data returned.")
-    else:
-            print("Please set your API_KEY in config/settings.yaml to test fetching odds.")
-        # Example of what the data structure might look like (for development purposes)
-        example_event = {
-            "id": "abcdef1234567890",
-            "sport_key": "soccer_epl",
-            "sport_title": "English Premier League",
-            "commence_time": "2023-08-15T18:00:00Z",
-            "home_team": "Arsenal",
-            "away_team": "Manchester City",
-            "bookmakers": [
-                {
-                    "key": "unibet",
-                    "title": "Unibet",
-                    "last_update": "2023-08-15T17:55:00Z",
-                    "markets": [
-                        {
-                            "key": "h2h",
-                            "outcomes": [
-                                {"name": "Arsenal", "price": 2.75},
-                                {"name": "Manchester City", "price": 2.50},
-                                {"name": "Draw", "price": 3.50}
-                            ]
-                        }
-                    ]
-                }
-            ]
-        }
-        print("\nExample data structure for one event (if API_KEY was set):")
-        print(json.dumps(example_event, indent=2))
+    # Minimal direct test if someone insists on running, but not recommended without care
+    # api_key_manual = "YOUR_ACTUAL_KEY_FOR_TESTING_ONLY" # Replace if testing directly
+    # sport_key_manual = "soccer_usa_mls"
+    # if api_key_manual != "YOUR_ACTUAL_KEY_FOR_TESTING_ONLY" and api_key_manual != API_KEY_PLACEHOLDER_CONFIG :
+    #     print(f"\nAttempting a direct test call with manually set key for sport '{sport_key_manual}'...")
+    #     odds_data = get_odds(api_key_manual, sport_key_manual, regions='us', markets='h2h')
+    #     if odds_data is not None:
+    #         print(f"Successfully fetched {len(odds_data)} events for '{sport_key_manual}'.")
+    #         if odds_data:
+    #             print("Details of the first event:")
+    #             print(json.dumps(odds_data[0], indent=2))
+    #     else:
+    #         print(f"Failed to fetch odds data for '{sport_key_manual}'.")
+    # else:
+    #     print("\nDirect test call skipped: API key not manually set in script for testing.")
+
+def get_available_sports(api_key: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Fetches the list of available sports from The Odds API.
+
+    Args:
+        api_key: The API key for The Odds API. This is mandatory.
+
+    Returns:
+        A list of sport objects (dictionaries) from the API response, 
+        or None if a critical error occurs.
+    """
+    if not api_key or api_key == API_KEY_PLACEHOLDER_CONFIG or api_key == API_KEY_PLACEHOLDER_INTERNAL:
+        print(f"Error: API key is missing or is a placeholder ('{api_key}'). Please configure it in config/settings.yaml.")
+        return None
+
+    params = {'apiKey': api_key}
+    url = f"{API_BASE_URL}" # The base URL itself is for /sports
+
+    response_obj = None
+    try:
+        response_obj = requests.get(url, params=params)
+
+        if response_obj.status_code == 401:
+            print(f"Error: Unauthorized (401) when fetching sports list. Check your API key. Message: {response_obj.text}")
+            return None
+        if response_obj.status_code == 429:
+            print(f"Error: Too many requests (429) when fetching sports list. You may have exceeded your API quota. Message: {response_obj.text}")
+            return None
+            
+        response_obj.raise_for_status()  # For other 4XX or 5XX errors
+
+        data = response_obj.json()
+        if not data: # Should not happen for /sports endpoint if API is working
+            print("No sports data returned from API, though request was successful.")
+            return [] 
+        return data
+    except requests.exceptions.HTTPError as e:
+        err_msg = f"HTTP error fetching available sports: {e}"
+        if response_obj is not None:
+            err_msg += f"\nResponse status: {response_obj.status_code}. Response content: {response_obj.text}"
+        print(err_msg)
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Request error fetching available sports: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        err_msg = f"Error decoding JSON response for available sports: {e}."
+        if response_obj is not None and response_obj.text:
+             err_msg += f"\nResponse content was: {response_obj.text[:500]}..."
+        print(err_msg)
+        return None

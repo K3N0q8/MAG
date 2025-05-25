@@ -90,49 +90,38 @@ def find_value_bets_for_event(event_data: Dict[str, Any], user_estimated_probabi
         details like team, outcome, odds, estimated probability, and EV.
     """
     value_bets = []
-    home_team = event_data.get('home_team')
-    away_team = event_data.get('away_team')
+    home_team = event_data.get('home_team') # Still useful for context in the output
+    away_team = event_data.get('away_team') # Still useful for context in the output
 
-    # Define outcomes we are interested in for H2H soccer
-    possible_outcomes = [home_team, away_team, "Draw"]
+    for bookmaker_data in event_data.get('bookmakers', []):
+        bookmaker_title = bookmaker_data.get('title', 'Unknown Bookmaker')
+        for market in bookmaker_data.get('markets', []):
+            market_key = market.get('key', 'unknown_market')
+            for outcome_details in market.get('outcomes', []):
+                outcome_name = outcome_details.get('name')
+                decimal_odds = outcome_details.get('price')
 
-    for bookmaker in event_data.get('bookmakers', []):
-        for market in bookmaker.get('markets', []):
-            if market.get('key') == 'h2h': # Focus on H2H market
-                for outcome_details in market.get('outcomes', []):
-                    outcome_name = outcome_details.get('name')
-                    decimal_odds = outcome_details.get('price')
+                if not (outcome_name and isinstance(decimal_odds, (int, float)) and decimal_odds >= 1.0):
+                    # Optionally log: print(f"Skipping invalid outcome data: {outcome_details} in market {market_key}")
+                    continue
 
-                    if not (outcome_name and isinstance(decimal_odds, (int, float)) and decimal_odds >= 1.0):
-                        continue
+                # User estimated probabilities should now be a flat dictionary where outcome_name is the key
+                if outcome_name in user_estimated_probabilities:
+                    true_prob = user_estimated_probabilities[outcome_name]
+                    ev = calculate_expected_value(float(decimal_odds), true_prob)
 
-                    # Check if this outcome is one we have a probability for
-                    # (e.g. home_team name, away_team name, or "Draw")
-                    # This mapping might need to be more robust if team names vary slightly
-                    true_probability_key = None
-                    if outcome_name == home_team:
-                        true_probability_key = home_team
-                    elif outcome_name == away_team:
-                        true_probability_key = away_team
-                    elif outcome_name == "Draw": # Assuming "Draw" is the standard name
-                        true_probability_key = "Draw"
-                    
-                    if true_probability_key and true_probability_key in user_estimated_probabilities:
-                        true_prob = user_estimated_probabilities[true_probability_key]
-                        ev = calculate_expected_value(float(decimal_odds), true_prob)
-
-                        if ev > value_threshold:
-                            value_bets.append({
-                                "event_id": event_data.get('id'),
-                                "home_team": home_team,
-                                "away_team": away_team,
-                                "bookmaker": bookmaker.get('title'),
-                                "market_key": market.get('key'),
-                                "outcome_name": outcome_name,
-                                "decimal_odds": float(decimal_odds),
-                                "estimated_true_probability": true_prob,
-                                "expected_value": ev
-                            })
+                    if ev > value_threshold:
+                        value_bets.append({
+                            "event_id": event_data.get('id'),
+                            "home_team": home_team, # For context
+                            "away_team": away_team, # For context
+                            "bookmaker": bookmaker_title,
+                            "market_key": market_key,
+                            "outcome_name": outcome_name,
+                            "decimal_odds": float(decimal_odds),
+                            "estimated_true_probability": true_prob,
+                            "expected_value": ev
+                        })
     return value_bets
 
 if __name__ == '__main__':
@@ -203,3 +192,37 @@ if __name__ == '__main__':
             print(f"    Estimated True Probability: {bet['estimated_true_probability']:.2%}, EV: {bet['expected_value']:.3f}")
     else:
         print("\nNo value bets found with EV > 0.05 for the example event.")
+
+    # 5. Get Implied Probabilities for Market
+    print("\n--- Get Implied Probabilities for Market Example ---")
+    market_outcomes_data = [
+        {"name": "Team A", "price": 2.0}, # 0.5
+        {"name": "Draw", "price": 3.2},   # 0.3125
+        {"name": "Team B", "price": 4.5}    # 0.222...
+    ]
+    market_implied_probs = get_implied_probabilities_for_market(market_outcomes_data)
+    print(f"Raw implied probabilities for market: {market_implied_probs}")
+    # Sum = 0.5 + 0.3125 + 0.2222... = 1.0347... (Overround)
+
+    market_outcomes_invalid = [
+        {"name": "Team C", "price": 1.8},
+        {"name": "Team D"} # Missing price
+    ]
+    market_implied_probs_invalid = get_implied_probabilities_for_market(market_outcomes_invalid)
+    print(f"Raw implied probabilities with invalid data: {market_implied_probs_invalid}")
+
+
+    # 6. Remove Vig
+    print("\n--- Remove Vig Example ---")
+    # Using market_implied_probs from above
+    if market_implied_probs:
+        de_vigged_probs = remove_vig(market_implied_probs)
+        print(f"De-vigged probabilities: {de_vigged_probs}")
+        if de_vigged_probs:
+            print(f"Sum of de-vigged probabilities: {sum(de_vigged_probs.values()):.4f}") # Should be close to 1.0
+    
+    empty_probs = {}
+    print(f"De-vigged for empty input: {remove_vig(empty_probs)}")
+    
+    probs_sum_zero = {"Team A": 0.0, "Team B": 0.0} # Edge case, should not happen with valid odds
+    print(f"De-vigged for zero-sum input: {remove_vig(probs_sum_zero)}")
